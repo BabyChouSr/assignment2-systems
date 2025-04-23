@@ -1,0 +1,1 @@
+uv run nsys profile --force-overwrite true -o result_attention_vs_softmax python cs336_systems/benchmark/benchmarking_script.py --config cs336_systems/defaults/gpt2_large.yaml
