@@ -32,6 +32,8 @@ class BenchmarkConfig:
     profile_pass: str
     batch_size: int = 4
     dtype: torch.dtype = torch.float32
+    output_file: str | None = None
+    model_type: str | None = None
 
 @dataclass
 class BenchmarkOutput:
@@ -39,15 +41,18 @@ class BenchmarkOutput:
     std_dev: int
 
 def run_forward_pass(model, batch):
+    torch.cuda.synchronize()
     start_time = timeit.default_timer()
     model(batch)
-    end_time = timeit.default_timer()
     torch.cuda.synchronize()
+    end_time = timeit.default_timer()
     return end_time - start_time
 
 def run_backward_pass(model, batch):
+    output = model(batch)
+    torch.cuda.synchronize()
     start_time = timeit.default_timer()
-    loss = cross_entropy(model(batch), batch)
+    loss = cross_entropy(output, batch)
     loss.backward()
     torch.cuda.synchronize()
     end_time = timeit.default_timer()
@@ -56,6 +61,7 @@ def run_backward_pass(model, batch):
 
 def run_all_pass_nvtx(model, batch):
     optimizer = AdamW(model.parameters())
+    torch.cuda.synchronize()
     start_time = timeit.default_timer()
     with nvtx.range("forward pass"):
         output = model(batch)
@@ -71,12 +77,26 @@ def run_all_pass_nvtx(model, batch):
     end_time = timeit.default_timer()
     return end_time - start_time
 
+def run_all_no_nvtx(model, batch):
+    optimizer = AdamW(model.parameters())
+    torch.cuda.synchronize()
+    start_time = timeit.default_timer()
+    output = model(batch)
+    loss = cross_entropy(model(batch), batch)
+    loss.backward()
+    optimizer.step()
+
+    torch.cuda.synchronize()
+    end_time = timeit.default_timer()
+    return end_time - start_time
+
 def apply_monkey_patch():
     cs336_basics.model.scaled_dot_product_attention = annotated_scaled_dot_product_attention
 
 @draccus.wrap()
 def benchmark(config: BenchmarkConfig):
-    apply_monkey_patch()
+    if config.profile_pass == "all":
+        apply_monkey_patch()
 
     model = BasicsTransformerLM(
         num_layers=config.num_layers,
@@ -88,6 +108,9 @@ def benchmark(config: BenchmarkConfig):
         rope_theta=config.rope_theta,
     ).to(device)
 
+    if config.model_type == "compiled":
+        model = torch.compile(model)
+
     batch = torch.randint(0, config.vocab_size, (4, config.context_length, ), dtype=torch.long, device=device)
 
     if config.profile_pass == "forward":
@@ -96,6 +119,8 @@ def benchmark(config: BenchmarkConfig):
         profile_func = run_backward_pass
     elif config.profile_pass == "all":
         profile_func = run_all_pass_nvtx
+    elif config.profile_pass == "all-no-nvtx":
+        profile_func = run_all_no_nvtx
 
     for _ in range(config.warmup_steps):
         profile_func(model, batch)
@@ -103,12 +128,19 @@ def benchmark(config: BenchmarkConfig):
     torch.cuda.synchronize()
 
     times = []
+    if config.output_file:
+        torch.cuda.memory._record_memory_history(max_entries=1000000)
+
     for _ in range(config.profile_steps):
-        with torch.autocast(device, dtype=config.dtype):
-            times.append(profile_func(model, batch))
+        # with torch.autocast(device, dtype=config.dtype):
+        times.append(profile_func(model, batch))
 
     mean_time = sum(times) / len(times)
     std_dev = np.std(times, ddof=1)
+
+    if config.output_file:
+        torch.cuda.memory._dump_snapshot(config.output_file)
+        torch.cuda.memory._record_memory_history(enabled=None)
 
     return BenchmarkOutput(mean_time=mean_time, std_dev=std_dev)
 

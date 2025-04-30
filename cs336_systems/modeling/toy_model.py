@@ -11,9 +11,9 @@ class ToyModel(nn.Module):
 
     def forward(self, x):
         x = self.fc1(x)
-        print(f"Output of first ffn: {x.dtype}")
+        # print(f"Output of first ffn: {x.dtype}")
         x = self.relu(x)
         x = self.ln(x)
-        print(f"Output of layer norm: {x.dtype}")
+        # print(f"Output of layer norm: {x.dtype}")
         x = self.fc2(x)
         return x

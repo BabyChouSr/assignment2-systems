@@ -166,3 +166,4 @@ cython_debug/
 slurm_outputs/*
 results/*
 nvtx_results/*
+memory_results/*

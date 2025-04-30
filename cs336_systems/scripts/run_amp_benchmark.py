@@ -6,21 +6,19 @@ import pandas as pd
 from cs336_systems.benchmark.benchmarking_script import benchmark, BenchmarkConfig
 from cs336_systems.defaults.model import gpt2_small, gpt2_medium, gpt2_large, gpt2_xl, gpt2_2_7B
 
-models = [gpt2_small, gpt2_medium, gpt2_large, gpt2_xl]
+models = [gpt2_small, gpt2_medium, gpt2_large, gpt2_xl, gpt2_2_7B]
 
-def profile_models(models, num_warmup_steps: int | None = None, dtype = torch.float32, model_type: str | None = None):
+def profile_models(models, num_warmup_steps: int | None = None, dtype = torch.float32):
     import pandas as pd
 
     rows = []
     for model_config in models:
-        for pass_type in ["forward", "all-no-nvtx"]:
+        for pass_type in ["forward", "backward"]:
             model_config.profile_pass = pass_type
             if num_warmup_steps is not None:
                 model_config.warmup_steps = num_warmup_steps
 
             model_config.dtype = dtype
-            model_config.model_type = model_type
-            model_config.profile_steps = 20
             
             benchmark_output = benchmark(model_config)
             row = {
@@ -41,7 +39,7 @@ def profile_models(models, num_warmup_steps: int | None = None, dtype = torch.fl
             rows.append(row)
 
     df = pd.DataFrame(rows)
-    print(df.to_latex(index=False, float_format="{:.4f}".format))
+    print(df.to_latex(index=False, float_format="{:.2f}".format))
     df.to_csv("results/benchmarking_script_gpt2.csv")
     return df
 
@@ -63,8 +61,7 @@ if __name__ == "__main__":
     job = executor.submit(
             profile_models, 
             models,
-            15,
-            torch.float32,
-            "compiled",
+            5,
+            torch.bfloat16
     )
     print(f"Submitted job ID: {job.job_id}")
